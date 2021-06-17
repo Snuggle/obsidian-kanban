@@ -37,16 +37,16 @@ export function reorderList<T>({
 // Callback to update() a board
 export type BoardMutator = (board: Board) => Board;
 
-export function swapLanes(srcIndex: number, dstIndex: number): BoardMutator {
-  return srcIndex === dstIndex
+export function reorderLanes(sourceIndex: number, destinationIndex: number): BoardMutator {
+  return sourceIndex === destinationIndex
     ? null
     : (boardData: Board) =>
         update(boardData, {
           lanes: (lanes) =>
             reorderList<Lane>({
               list: lanes,
-              startIndex: srcIndex,
-              endIndex: dstIndex,
+              startIndex: sourceIndex,
+              endIndex: destinationIndex,
             }),
         });
 }

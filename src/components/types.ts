@@ -56,16 +56,3 @@ export interface Board {
   lanes: Lane[];
   archive: Item[];
 }
-
-export interface BoardModifiers {
-  addItemsToLane: (laneIndex: number, items: Item[]) => void;
-  addLane: (lane: Lane) => void;
-  archiveItem: (laneIndex: number, itemIndex: number, item: Item) => void;
-  archiveLane: (laneIndex: number) => void;
-  archiveLaneItems: (laneIndex: number) => void;
-  deleteItem: (laneIndex: number, itemIndex: number) => void;
-  deleteLane: (laneIndex: number) => void;
-  updateItem: (laneIndex: number, itemIndex: number, item: Item) => void;
-  updateLane: (laneIndex: number, lane: Lane) => void;
-  duplicateItem: (laneIndex: number, itemIndex: number) => void;
-}

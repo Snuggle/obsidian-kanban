@@ -1,7 +1,5 @@
 import { moment, setIcon } from "obsidian";
-import update from "immutability-helper";
-
-import { BoardModifiers, Item } from "../types";
+import { Item } from "../types";
 import {
   c,
   escapeRegExpStr,
@@ -13,6 +11,7 @@ import flatpickr from "flatpickr";
 import { defaultDateTrigger, defaultTimeTrigger } from "src/settingHelpers";
 import { getDefaultLocale } from "./datePickerLocale";
 import { KanbanView } from "src/KanbanView";
+import { BoardModifiers } from "../helpers/boardModifiers";
 
 export function constructDatePicker(
   coordinates: { x: number; y: number },
@@ -296,4 +295,33 @@ export function constructMenuTimePickerOnChange({
       view.parser.updateItem(item, titleRaw)
     );
   };
+}
+
+export function getItemClassModifiers(item: Item) {
+  const date = item.metadata.date;
+  const classModifiers: string[] = [];
+
+  if (date) {
+    if (date.isSame(new Date(), "day")) {
+      classModifiers.push("is-today");
+    }
+
+    if (date.isAfter(new Date(), "day")) {
+      classModifiers.push("is-future");
+    }
+
+    if (date.isBefore(new Date(), "day")) {
+      classModifiers.push("is-past");
+    }
+  }
+
+  if (item.data.isComplete) {
+    classModifiers.push("is-complete");
+  }
+
+  for (let tag of item.metadata.tags) {
+    classModifiers.push(`has-tag-${tag.slice(1)}`);
+  }
+
+  return classModifiers;
 }

@@ -1,16 +1,13 @@
-import { moment } from "obsidian";
 import update from "immutability-helper";
 import React from "react";
-import { DataBridge } from "../DataBridge";
-import { Droppable, DroppableProvided, Draggable, DraggableProvided, DraggableStateSnapshot, DraggableRubric } from "react-beautiful-dnd";
-import { Board, BoardModifiers, Item, Lane } from "./types";
 import {
-  c,
-  baseClassName,
-  getDefaultDateFormat,
-  getDefaultTimeFormat,
-  generateInstanceId,
-} from "./helpers";
+  SortableContext,
+  horizontalListSortingStrategy,
+} from "@dnd-kit/sortable";
+
+import { DataBridge } from "../DataBridge";
+import { Board } from "./types";
+import { c, baseClassName } from "./helpers";
 import { DraggableLane } from "./Lane/Lane";
 import { LaneForm } from "./Lane/LaneForm";
 import { ObsidianContext } from "./context";
@@ -18,265 +15,121 @@ import { KanbanView } from "src/KanbanView";
 import { frontMatterKey } from "../parser";
 import { t } from "src/lang/helpers";
 import { Icon } from "./Icon/Icon";
+import { getBoardModifiers } from "./helpers/boardModifiers";
+import { useDroppable } from "@dnd-kit/core";
+
+function useBoardEventHandlers(view: KanbanView, filePath: string) {
+  return React.useMemo(
+    () => ({
+      onMouseOver: (e: React.MouseEvent<HTMLDivElement, MouseEvent>) => {
+        const targetEl = e.target as HTMLElement;
+
+        if (targetEl.tagName !== "A") return;
+
+        if (targetEl.hasClass("internal-link")) {
+          view.app.workspace.trigger("hover-link", {
+            event: e.nativeEvent,
+            source: frontMatterKey,
+            hoverParent: view,
+            targetEl,
+            linktext: targetEl.getAttr("href"),
+            sourcePath: view.file.path,
+          });
+        }
+      },
+      onClick: (e: React.MouseEvent<HTMLDivElement, MouseEvent>) => {
+        const targetEl = e.target as HTMLElement;
+
+        if (targetEl.tagName !== "A") return;
+
+        // Open an internal link in a new pane
+        if (targetEl.hasClass("internal-link")) {
+          e.preventDefault();
+
+          view.app.workspace.openLinkText(
+            targetEl.getAttr("href"),
+            filePath,
+            e.ctrlKey || e.metaKey
+          );
+
+          return;
+        }
+
+        // Open a tag search
+        if (targetEl.hasClass("tag")) {
+          e.preventDefault();
+
+          (view.app as any).internalPlugins
+            .getPluginById("global-search")
+            .instance.openGlobalSearch(`tag:${targetEl.getAttr("href")}`);
+
+          return;
+        }
+
+        // Open external link
+        if (targetEl.hasClass("external-link")) {
+          e.preventDefault();
+          window.open(targetEl.getAttr("href"), "_blank");
+        }
+      },
+    }),
+    [view, filePath]
+  );
+}
+
+interface SearchProps {
+  view: KanbanView;
+  searchQuery: string;
+  setSearchQuery: React.Dispatch<React.SetStateAction<string>>;
+  searchRef: React.MutableRefObject<HTMLInputElement>;
+}
+
+function Search({ view, searchRef, searchQuery, setSearchQuery }: SearchProps) {
+  return (
+    <div className={c("search-wrapper")}>
+      <input
+        ref={searchRef}
+        value={searchQuery}
+        onChange={(e) => {
+          setSearchQuery(e.target.value);
+        }}
+        onKeyDown={(e) => {
+          if (e.key === "Escape") {
+            setSearchQuery("");
+            (e.target as HTMLInputElement).blur();
+            view.toggleSearch();
+          }
+        }}
+        type="text"
+        className={c("filter-input")}
+        placeholder={t("Search...")}
+      />
+      <button
+        className={c("search-cancel-button")}
+        onClick={() => {
+          setSearchQuery("");
+          view.toggleSearch();
+        }}
+        aria-label={t("Cancel")}
+      >
+        <Icon name="cross" />
+      </button>
+    </div>
+  );
+}
 
 interface KanbanProps {
   dataBridge: DataBridge<Board>;
   view: KanbanView;
 }
 
-interface BoardStateProps {
-  view: KanbanView;
-  setBoardData: React.Dispatch<React.SetStateAction<Board>>;
-}
-
-function getBoardModifiers({
-  view,
-  setBoardData,
-}: BoardStateProps): BoardModifiers {
-  const shouldAppendArchiveDate = !!view.getSetting("prepend-archive-date");
-  const dateFmt =
-    view.getSetting("date-format") || getDefaultDateFormat(view.app);
-  const timeFmt =
-    view.getSetting("time-format") || getDefaultTimeFormat(view.app);
-  const archiveDateSeparator =
-    (view.getSetting("prepend-archive-separator") as string) || "";
-  const archiveDateFormat =
-    (view.getSetting("prepend-archive-format") as string) ||
-    `${dateFmt} ${timeFmt}`;
-
-  const appendArchiveDate = (item: Item) => {
-    const newTitle = [moment().format(archiveDateFormat)];
-
-    if (archiveDateSeparator) newTitle.push(archiveDateSeparator);
-
-    newTitle.push(item.titleRaw);
-
-    const titleRaw = newTitle.join(" ");
-    return view.parser.updateItem(item, titleRaw);
-  };
-
-  return {
-    addItemsToLane: (laneIndex: number, items: Item[]) => {
-      items.forEach((item) =>
-        view.app.workspace.trigger("kanban:card-added", view.file, item)
-      );
-
-      setBoardData((boardData) =>
-        update(boardData, {
-          lanes: {
-            [laneIndex]: {
-              items: {
-                $push: items,
-              },
-            },
-          },
-        })
-      );
-    },
-
-    addLane: (lane: Lane) => {
-      view.app.workspace.trigger("kanban:lane-added", view.file, lane);
-
-      setBoardData((boardData) =>
-        update(boardData, {
-          lanes: {
-            $push: [lane],
-          },
-        })
-      );
-    },
-
-    updateLane: (laneIndex: number, lane: Lane) => {
-      view.app.workspace.trigger("kanban:lane-updated", view.file, lane);
-
-      setBoardData((boardData) =>
-        update(boardData, {
-          lanes: {
-            [laneIndex]: {
-              $set: lane,
-            },
-          },
-        })
-      );
-    },
-
-    deleteLane: (laneIndex: number) => {
-      setBoardData((boardData) => {
-        view.app.workspace.trigger(
-          "kanban:lane-deleted",
-          view.file,
-          boardData.lanes[laneIndex]
-        );
-
-        return update(boardData, {
-          lanes: {
-            $splice: [[laneIndex, 1]],
-          },
-        });
-      })
-    },
-
-    archiveLane: (laneIndex: number) => {
-      setBoardData((boardData) => {
-        view.app.workspace.trigger(
-          "kanban:lane-archived",
-          view.file,
-          boardData.lanes[laneIndex]
-        );
-
-      const items = boardData.lanes[laneIndex].items;
-
-      return update(boardData, {
-          lanes: {
-            $splice: [[laneIndex, 1]],
-          },
-          archive: {
-            $push: shouldAppendArchiveDate
-              ? items.map(appendArchiveDate)
-              : items,
-          },
-        });
-      });
-    },
-
-    archiveLaneItems: (laneIndex: number) => {
-      setBoardData((boardData) => {
-        const items = boardData.lanes[laneIndex].items;
-        view.app.workspace.trigger(
-          "kanban:lane-cards-archived",
-          view.file,
-          items
-        );
-
-      return update(boardData, {
-          lanes: {
-            [laneIndex]: {
-              items: {
-                $set: [],
-              },
-            },
-          },
-          archive: {
-            $push: shouldAppendArchiveDate
-              ? items.map(appendArchiveDate)
-              : items,
-          },
-        })
-      });
-    },
-
-    deleteItem: (laneIndex: number, itemIndex: number) => {
-      setBoardData((boardData) => {
-        view.app.workspace.trigger(
-          "kanban:card-deleted",
-          view.file,
-          boardData.lanes[laneIndex].items[itemIndex]
-        );
-
-        return update(boardData, {
-          lanes: {
-            [laneIndex]: {
-              items: {
-                $splice: [[itemIndex, 1]],
-              },
-            },
-          },
-        })
-      });
-    },
-
-    updateItem: (laneIndex: number, itemIndex: number, item: Item) => {
-      setBoardData((boardData) => {
-        view.app.workspace.trigger(
-          "kanban:card-updated",
-          view.file,
-          boardData.lanes[laneIndex],
-          item
-        );
-
-        return update(boardData, {
-          lanes: {
-            [laneIndex]: {
-              items: {
-                [itemIndex]: {
-                  $set: item,
-                },
-              },
-            },
-          },
-        })
-      });
-    },
-
-    archiveItem: (laneIndex: number, itemIndex: number, item: Item) => {
-      setBoardData((boardData) => {
-        view.app.workspace.trigger(
-          "kanban:card-archived",
-          view.file,
-          boardData.lanes[laneIndex],
-          item
-        );
-
-        return update(boardData, {
-          lanes: {
-            [laneIndex]: {
-              items: {
-                $splice: [[itemIndex, 1]],
-              },
-            },
-          },
-          archive: {
-            $push: [shouldAppendArchiveDate ? appendArchiveDate(item) : item],
-          },
-        })
-      });
-    },
-
-    duplicateItem: (laneIndex: number, itemIndex: number) => {
-      setBoardData((boardData) => {
-        view.app.workspace.trigger(
-          "kanban:card-duplicated",
-          view.file,
-          boardData.lanes[laneIndex],
-          itemIndex
-        );
-
-        const itemWithNewID = update(
-          boardData.lanes[laneIndex].items[itemIndex],
-          {
-            id: {
-              $set: generateInstanceId(),
-            },
-          }
-        );
-
-        return update(boardData, {
-          lanes: {
-            [laneIndex]: {
-              items: {
-                $splice: [[itemIndex, 0, itemWithNewID]],
-              },
-            },
-          },
-        })
-      });
-    },
-  };
-}
-
-export const Kanban = ({view, dataBridge }: KanbanProps) => {
-
-  const filePath = view.file?.path;
-
+export const Kanban = ({ view, dataBridge }: KanbanProps) => {
   const [boardData, setBoardData] = dataBridge.useState();
-
   const [searchQuery, setSearchQuery] = React.useState<string>("");
   const searchRef = React.useRef<HTMLInputElement>();
 
+  const filePath = view.file?.path;
   const maxArchiveLength = view.getSetting("max-archive-size");
-
-  // Don't render anything if there's no board
-  if (!boardData) return <div/>;
 
   React.useEffect(() => {
     if (boardData.isSearching) {
@@ -307,158 +160,51 @@ export const Kanban = ({view, dataBridge }: KanbanProps) => {
     return getBoardModifiers({ view, setBoardData });
   }, [view, setBoardData]);
 
-  if (boardData === null) return null;
-
-  // These rendering functions can't usefully be memoized, because they all use boardData,
-  // which will always be "changed" when this component is re-rendered.
-
-  const renderLane = (
-    provided: DraggableProvided,
-    snapshot: DraggableStateSnapshot,
-    rubric: DraggableRubric
-  ) => (
-    <DraggableLane
-      lane={boardData.lanes[rubric.source.index]} laneIndex={rubric.source.index}
-      provided={provided} snapshot={snapshot}
-    />
+  const boardContext = React.useMemo(
+    () => ({
+      view,
+      filePath,
+      boardModifiers,
+      setBoardData,
+      query: searchQuery.toLocaleLowerCase(),
+    }),
+    [view, setBoardData, boardModifiers, searchQuery, filePath]
   );
 
-  const renderLaneGhost = (
-    provided: DraggableProvided,
-    snapshot: DraggableStateSnapshot,
-    rubric: DraggableRubric
-  ) => (
-    <DraggableLane
-      lane={boardData.lanes[rubric.source.index]} laneIndex={rubric.source.index} isGhost={true}
-      provided={provided} snapshot={snapshot}
-    />
-  );
+  const boardEventHandlers = useBoardEventHandlers(view, filePath);
 
-  const renderLanes = (provided: DroppableProvided) => (
-    <div
-      className={c("board")}
-      ref={provided.innerRef}
-      {...provided.droppableProps}
-    >
-      {boardData.lanes.map((lane, i) => {
-        return (
-          <Draggable draggableId={lane.id} key={lane.id} index={i}>
-            {renderLane}
-          </Draggable>
-        );
-      })}
-      {provided.placeholder}
-      <LaneForm />
-    </div>
-  );
+  const { isOver, setNodeRef } = useDroppable({
+    id: view.id,
+    data: {
+      boardContext
+    }
+  });
 
-  const onMouseOver = React.useCallback(
-    (e: React.MouseEvent<HTMLDivElement, MouseEvent>) => {
-      const targetEl = e.target as HTMLElement;
-
-      if (targetEl.tagName !== "A") return;
-
-      if (targetEl.hasClass("internal-link")) {
-        view.app.workspace.trigger("hover-link", {
-          event: e.nativeEvent,
-          source: frontMatterKey,
-          hoverParent: view,
-          targetEl,
-          linktext: targetEl.getAttr("href"),
-          sourcePath: view.file.path,
-        });
-      }
-    },
-    [view]
-  );
-
-  const onClick = React.useCallback(
-    (e: React.MouseEvent<HTMLDivElement, MouseEvent>) => {
-      const targetEl = e.target as HTMLElement;
-
-      if (targetEl.tagName !== "A") return;
-
-      // Open an internal link in a new pane
-      if (targetEl.hasClass("internal-link")) {
-        e.preventDefault();
-
-        view.app.workspace.openLinkText(
-          targetEl.getAttr("href"),
-          filePath,
-          e.ctrlKey || e.metaKey
-        );
-
-        return;
-      }
-
-      // Open a tag search
-      if (targetEl.hasClass("tag")) {
-        e.preventDefault();
-
-        (view.app as any).internalPlugins
-          .getPluginById("global-search")
-          .instance.openGlobalSearch(`tag:${targetEl.getAttr("href")}`);
-
-        return;
-      }
-
-      // Open external link
-      if (targetEl.hasClass("external-link")) {
-        e.preventDefault();
-        window.open(targetEl.getAttr("href"), "_blank");
-      }
-    },
-    [view, filePath]
-  );
+  // Don't render anything if there's no board
+  if (!boardData) return null;
 
   return (
-    <ObsidianContext.Provider value={ React.useMemo(() => ({view, boardModifiers, filePath, query: searchQuery.toLocaleLowerCase()}), [view, boardModifiers, searchQuery, filePath])}>
-          {boardData.isSearching && (
-            <div className={c("search-wrapper")}>
-              <input
-                ref={searchRef}
-                value={searchQuery}
-                onChange={(e) => {
-                  setSearchQuery(e.target.value);
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === "Escape") {
-                    setSearchQuery("");
-                    (e.target as HTMLInputElement).blur();
-                    view.toggleSearch();
-                  }
-                }}
-                type="text"
-                className={c("filter-input")}
-                placeholder={t("Search...")}
-              />
-              <button
-                className={c("search-cancel-button")}
-                onClick={() => {
-                  setSearchQuery("");
-                  view.toggleSearch();
-                }}
-                aria-label={t("Cancel")}
-              >
-                <Icon name="cross" />
-              </button>
-            </div>
-          )}
-          <div
-            className={baseClassName}
-            onMouseOver={onMouseOver}
-            onClick={onClick}
+    <ObsidianContext.Provider value={boardContext}>
+      {boardData.isSearching && (
+        <Search
+          view={view}
+          searchRef={searchRef}
+          searchQuery={searchQuery}
+          setSearchQuery={setSearchQuery}
+        />
+      )}
+      <div className={baseClassName} {...boardEventHandlers}>
+        <div className={c("board")} ref={setNodeRef}>
+          <SortableContext
+            items={boardData.lanes}
+            strategy={horizontalListSortingStrategy}
           >
-            <Droppable
-              droppableId={view.id}
-              type="LANE"
-              direction="horizontal"
-              ignoreContainerClipping={false}
-              renderClone={renderLaneGhost}
-            >
-              {renderLanes}
-            </Droppable>
-          </div>
+            {boardData.lanes.map((lane, i) => (
+              <DraggableLane lane={lane} laneIndex={i} />
+            ))}
+          </SortableContext>
+        </div>
+      </div>
     </ObsidianContext.Provider>
   );
 };

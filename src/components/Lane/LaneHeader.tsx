@@ -4,17 +4,17 @@ import { Lane } from "../types";
 import { c } from "../helpers";
 import { GripIcon } from "../Icon/GripIcon";
 import { Icon } from "../Icon/Icon";
-import { DraggableProvidedDragHandleProps } from "react-beautiful-dnd";
 import { ObsidianContext } from "../context";
 import { LaneTitle } from "./LaneTitle";
 import { LaneSettings } from "./LaneSettings";
 import { useSettingsMenu, ConfirmAction } from "./LaneMenu";
 import { t } from "src/lang/helpers";
+import { SyntheticListenerMap } from "@dnd-kit/core/dist/hooks/utilities";
 
 interface LaneHeaderProps {
   lane: Lane;
   laneIndex: number;
-  dragHandleProps?: DraggableProvidedDragHandleProps;
+  dragHandleProps?: SyntheticListenerMap;
 }
 
 export const LaneHeader = React.memo(
@@ -35,7 +35,6 @@ export const LaneHeader = React.memo(
           <div
             className={c("lane-grip")}
             {...dragHandleProps}
-            aria-label={t("Move list")}
           >
             <GripIcon />
           </div>

@@ -12,40 +12,53 @@ interface MarkdownRendererProps {
 }
 
 interface MarkdownRendererState {
-  parsedEl?: HTMLDivElement
+  parsedEl?: HTMLDivElement;
   marker?: Mark;
 }
 
-export class MarkdownRenderer extends React.Component<MarkdownRendererProps, MarkdownRendererState> {
+export class MarkdownRenderer extends React.Component<
+  MarkdownRendererProps,
+  MarkdownRendererState
+> {
   static contextType = ObsidianContext;
   props: MarkdownRendererProps;
   context: ObsidianContextProps;
 
   parse(props: MarkdownRendererProps) {
-    return props.dom?.cloneNode(true) as HTMLDivElement || this.context.view?.renderMarkdown(props.markdownString);
+    return (
+      (props.dom?.cloneNode(true) as HTMLDivElement) ||
+      this.context.view?.renderMarkdown(props.markdownString)
+    );
   }
 
-  refreshState(props: MarkdownRendererProps, state: MarkdownRendererState={}) {
-    let {parsedEl, marker} = state;
+  refreshState(
+    props: MarkdownRendererProps,
+    state: MarkdownRendererState = {}
+  ) {
+    let { parsedEl, marker } = state;
     if (!parsedEl) parsedEl = this.parse(props);
     if (!marker) {
-      marker = new Mark(parsedEl)
+      marker = new Mark(parsedEl);
     } else {
       marker.unmark();
     }
     if (props.searchQuery) marker.mark(props.searchQuery);
-    return (parsedEl !== state.parsedEl || marker !== state.marker ) ? {parsedEl, marker} : state;
+    return parsedEl !== state.parsedEl || marker !== state.marker
+      ? { parsedEl, marker }
+      : state;
   }
 
-  shouldComponentUpdate(nextProps: MarkdownRendererProps, nextState: MarkdownRendererState) {
+  shouldComponentUpdate(
+    nextProps: MarkdownRendererProps,
+    nextState: MarkdownRendererState
+  ) {
     // Ignore changes to state, as we only set state from componentDidUpdate
-    const res= (
+    const res =
       nextProps.dom !== this.props.dom ||
       nextProps.className !== this.props.className ||
       nextProps.markdownString !== this.props.markdownString ||
-      nextProps.searchQuery !== this.props.searchQuery
-    );
-    return res
+      nextProps.searchQuery !== this.props.searchQuery;
+    return res;
   }
 
   componentDidMount() {
@@ -54,27 +67,37 @@ export class MarkdownRenderer extends React.Component<MarkdownRendererProps, Mar
     this.state = this.refreshState(this.props);
 
     if (this.state.parsedEl) {
-      findDOMNode(this).appendChild(this.state.parsedEl)
+      findDOMNode(this).appendChild(this.state.parsedEl);
     }
   }
 
   componentDidUpdate(prevProps: MarkdownRendererProps) {
-    let {parsedEl, marker} = this.state
-    if (this.props.dom !== prevProps.dom || this.props.markdownString !== prevProps.markdownString) {
-      const newState = {parsedEl, marker} = this.refreshState(this.props, {});
-      this.setState(newState)
+    let { parsedEl, marker } = this.state;
+    if (
+      this.props.dom !== prevProps.dom ||
+      this.props.markdownString !== prevProps.markdownString
+    ) {
+      const newState = ({ parsedEl, marker } = this.refreshState(
+        this.props,
+        {}
+      ));
+      this.setState(newState);
     } else if (this.props.searchQuery !== prevProps.searchQuery) {
       marker.unmark();
-      if (this.props.searchQuery) marker.mark(this.props.searchQuery)
+      if (this.props.searchQuery) marker.mark(this.props.searchQuery);
     }
-    const me = findDOMNode(this), newDOM = parsedEl;
-    if (me.firstChild) me.replaceChild(newDOM, me.firstChild); else me.appendChild(newDOM);
+    const me = findDOMNode(this),
+      newDOM = parsedEl;
+    if (me.firstChild) me.replaceChild(newDOM, me.firstChild);
+    else me.appendChild(newDOM);
   }
 
   render() {
     return (
       <div
-        className={`markdown-preview-view ${c("markdown-preview-view")} ${this.props.className || ""}`}
+        className={`markdown-preview-view ${c("markdown-preview-view")} ${
+          this.props.className || ""
+        }`}
       />
     );
   }

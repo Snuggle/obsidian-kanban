@@ -42,14 +42,10 @@ export default class KanbanPlugin extends Plugin {
   hasSet: { [id: string]: boolean } = {};
   appEl: HTMLDivElement;
   views: DataBridge<Map<string, KanbanView>> = new DataBridge(new Map());
+  _loaded: boolean = false;
 
   async onload() {
-    const self = this;
-
     await this.loadSettings();
-
-    this.registerView(kanbanViewType, (leaf) => new KanbanView(leaf, this));
-    this.registerCommands();
 
     this.settingsTab = new KanbanSettingsTab(
       this.app,
@@ -70,31 +66,44 @@ export default class KanbanPlugin extends Plugin {
     );
 
     this.addSettingTab(this.settingsTab);
+    this.registerView(kanbanViewType, (leaf) => new KanbanView(leaf, this));
+    this.registerMonkeyPatches();
+    this.registerEvents();
+    this.registerCommands();
+
+    // @ts-ignore
+    this.app.workspace.registerHoverLinkSource(frontMatterKey, {
+      display: "Kanban",
+      defaultMod: true,
+    });
 
     // Mount an empty component to start; views will be added as we go
     this.mount();
+  }
 
-    this.app.workspace.onLayoutReady(() => {
-      this.register(
-        around((this.app as any).commands.commands["editor:open-search"], {
-          checkCallback(next) {
-            return function (isChecking: boolean) {
-              if (isChecking) {
-                return next.call(this, isChecking);
-              }
-              const view = self.app.workspace.getActiveViewOfType(KanbanView);
+  addView(view: KanbanView) {
+    const views = this.views.getData();
+    if (!views.has(view.id)) {
+      console.log('addView')
+      this.views.setExternal(update(views, { $add: [[view.id, view]] }));
+    }
+  }
 
-              if (view) {
-                view.toggleSearch();
-              } else {
-                next.call(this, false);
-              }
-            };
-          },
-        })
-      );
-    });
+  removeView(view: KanbanView) {
+    const views = this.views.getData();
+    if (views.has(view.id)) {
+      this.views.setExternal(update(views, { $remove: [view.id] }));
+    }
+  }
 
+  mount() {
+    ReactDOM.render(
+      createApp(this.app, this.views),
+      this.appEl ?? (this.appEl = document.body.createDiv())
+    );
+  }
+
+  registerEvents() {
     this.registerEvent(
       this.app.workspace.on("file-menu", (menu, file: TFile, source, leaf) => {
         // Add a menu item to the folder context menu to create a board
@@ -116,143 +125,6 @@ export default class KanbanPlugin extends Plugin {
           view.onFileMetadataChange(file);
         });
       })
-    );
-
-    // @ts-ignore
-    this.app.workspace.registerHoverLinkSource(frontMatterKey, {
-      display: "Kanban",
-      defaultMod: true,
-    });
-
-    // TODO: embedded kanban:
-    // this.registerMarkdownPostProcessor((el, ctx) => {
-    //   if (ctx.frontmatter && ctx.frontmatter[frontMatterKey]) {
-    //     clearTimeout(this.dbTimers[ctx.docId]);
-
-    //     this.dbTimers[ctx.docId] = window.setTimeout(() => {
-    //       delete this.dbTimers[ctx.docId];
-
-    //       if (!el.parentNode) return;
-
-    //       const container = el.closest(".markdown-embed-content");
-
-    //       if (container) {
-    //         container.empty();
-    //         ctx.addChild(
-    //           new KanbanEmbed(ctx.sourcePath, container as HTMLElement)
-    //         );
-    //       }
-    //     }, 50);
-    //   }
-    // });
-
-    // Monkey patch WorkspaceLeaf to open Kanbans with KanbanView by default
-    const plugin: any = this;
-    this.register(
-      around(WorkspaceLeaf.prototype, {
-        // Kanbans can be viewed as markdown or kanban, and we keep track of the mode
-        // while the file is open. When the file closes, we no longer need to keep track of it.
-        detach(next) {
-          return function () {
-            const state = this.view?.getState();
-
-            if (state?.file && self.kanbanFileModes[this.id || state.file]) {
-              delete self.kanbanFileModes[this.id || state.file];
-            }
-
-            return next.apply(this);
-          };
-        },
-
-        setViewState(next) {
-          return function (state: ViewState, ...rest: any[]) {
-            if (
-              // Don't force kanban mode during shutdown
-              plugin._loaded &&
-              // If we have a markdown file
-              state.type === "markdown" &&
-              state.state?.file &&
-              // And the current mode of the file is not set to markdown
-              self.kanbanFileModes[this.id || state.state.file] !== "markdown"
-            ) {
-              // Then check for the kanban frontMatterKey
-              const cache = self.app.metadataCache.getCache(state.state.file);
-
-              if (cache?.frontmatter && cache.frontmatter[frontMatterKey]) {
-                // If we have it, force the view type to kanban
-                const newState = {
-                  ...state,
-                  type: kanbanViewType,
-                };
-
-                self.kanbanFileModes[state.state.file] = kanbanViewType;
-
-                return next.apply(this, [newState, ...rest]);
-              }
-            }
-
-            return next.apply(this, [state, ...rest]);
-          };
-        },
-      })
-    );
-
-    // Add a menu item to go back to kanban view
-    this.register(
-      around(MarkdownView.prototype, {
-        onMoreOptionsMenu(next) {
-          return function (menu: Menu) {
-            const file = this.file;
-            const cache = file
-              ? self.app.metadataCache.getFileCache(file)
-              : null;
-
-            if (
-              !file ||
-              !cache?.frontmatter ||
-              !cache.frontmatter[frontMatterKey]
-            ) {
-              return next.call(this, menu);
-            }
-
-            menu
-              .addItem((item) => {
-                item
-                  .setTitle(t("Open as kanban board"))
-                  .setIcon(kanbanIcon)
-                  .onClick(() => {
-                    self.kanbanFileModes[this.leaf.id || file.path] =
-                      kanbanViewType;
-                    self.setKanbanView(this.leaf);
-                  });
-              })
-              .addSeparator();
-
-            next.call(this, menu);
-          };
-        },
-      })
-    );
-  }
-
-  addView(view: KanbanView) {
-    const views = this.views.getData();
-    if (!views.has(view.id)) {
-      this.views.setExternal(update(views, { $add: [[view.id, view]] }));
-    }
-  }
-
-  removeView(view: KanbanView) {
-    const views = this.views.getData();
-    if (views.has(view.id)) {
-      this.views.setExternal(update(views, { $remove: [view.id] }));
-    }
-  }
-
-  mount() {
-    ReactDOM.render(
-      createApp(this.app, this.views),
-      this.appEl ?? (this.appEl = document.body.createDiv())
     );
   }
 
@@ -327,12 +199,129 @@ export default class KanbanPlugin extends Plugin {
     });
   }
 
+  registerMonkeyPatches() {
+    const self = this;
+
+    this.app.workspace.onLayoutReady(() => {
+      this.register(
+        around((this.app as any).commands.commands["editor:open-search"], {
+          checkCallback(next) {
+            return function (isChecking: boolean) {
+              if (isChecking) {
+                return next.call(this, isChecking);
+              }
+              const view = self.app.workspace.getActiveViewOfType(KanbanView);
+
+              if (view) {
+                view.toggleSearch();
+              } else {
+                next.call(this, false);
+              }
+            };
+          },
+        })
+      );
+    });
+
+    // Monkey patch WorkspaceLeaf to open Kanbans with KanbanView by default
+    this.register(
+      around(WorkspaceLeaf.prototype, {
+        // Kanbans can be viewed as markdown or kanban, and we keep track of the mode
+        // while the file is open. When the file closes, we no longer need to keep track of it.
+        detach(next) {
+          return function () {
+            const state = this.view?.getState();
+
+            if (state?.file && self.kanbanFileModes[this.id || state.file]) {
+              delete self.kanbanFileModes[this.id || state.file];
+            }
+
+            return next.apply(this);
+          };
+        },
+
+        setViewState(next) {
+          return function (state: ViewState, ...rest: any[]) {
+            if (
+              // Don't force kanban mode during shutdown
+              self._loaded &&
+              // If we have a markdown file
+              state.type === "markdown" &&
+              state.state?.file &&
+              // And the current mode of the file is not set to markdown
+              self.kanbanFileModes[this.id || state.state.file] !== "markdown"
+            ) {
+              // Then check for the kanban frontMatterKey
+              const cache = self.app.metadataCache.getCache(state.state.file);
+
+              if (cache?.frontmatter && cache.frontmatter[frontMatterKey]) {
+                // If we have it, force the view type to kanban
+                const newState = {
+                  ...state,
+                  type: kanbanViewType,
+                };
+
+                self.kanbanFileModes[state.state.file] = kanbanViewType;
+
+                return next.apply(this, [newState, ...rest]);
+              }
+            }
+
+            return next.apply(this, [state, ...rest]);
+          };
+        },
+      })
+    );
+
+    // Add a menu item to go back to kanban view
+    this.register(
+      around(MarkdownView.prototype, {
+        onMoreOptionsMenu(next) {
+          return function (menu: Menu) {
+            const file = this.file;
+            const cache = file
+              ? self.app.metadataCache.getFileCache(file)
+              : null;
+
+            if (
+              !file ||
+              !cache?.frontmatter ||
+              !cache.frontmatter[frontMatterKey]
+            ) {
+              return next.call(this, menu);
+            }
+
+            menu
+              .addItem((item) => {
+                item
+                  .setTitle(t("Open as kanban board"))
+                  .setIcon(kanbanIcon)
+                  .onClick(() => {
+                    self.kanbanFileModes[this.leaf.id || file.path] =
+                      kanbanViewType;
+                    self.setKanbanView(this.leaf);
+                  });
+              })
+              .addSeparator();
+
+            next.call(this, menu);
+          };
+        },
+      })
+    );
+  }
+
   async setMarkdownView(leaf: WorkspaceLeaf) {
-    await leaf.setViewState({
-      type: "markdown",
-      state: leaf.view.getState(),
-      popstate: true,
-    } as ViewState, {focus: true});
+    await leaf.setViewState(
+      {
+        type: "markdown",
+        state: leaf.view.getState(),
+        popstate: true,
+      } as ViewState,
+      {
+        focus: true,
+      }
+    );
   }
 
   async setKanbanView(leaf: WorkspaceLeaf) {
